@@ -44,31 +44,25 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
-  if (!password) {
-    return res.status(400).send('Password cannot be empty');
-  }
-
   try {
     // Check if user exists
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (result.rows.length === 0) {
-      return res.status(401).send('Invalid email or password');
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = userResult.rows[0];
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const user = result.rows[0];
-
-    // Check if the user is blocked
-    if (user.status === 'blocked') {
-      return res.status(403).json({ message: 'Your account is blocked. Please contact support.' });
-    }
-
-    // Compare the passwords
+    // Compare passwords
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).send('Invalid email or password');
+      return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    // Generate JWT token
+    // Update last_login to current timestamp
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+
+    // Generate a JWT token
     const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     res.json({ token });
@@ -78,6 +72,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
+   
 // Get all users (Any authenticated user)
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -154,6 +149,52 @@ router.get('/admin', authenticateToken, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+// Block user route
+router.patch('/:id/block', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query('UPDATE users SET status = $1 WHERE id = $2 RETURNING *', ['blocked', id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ message: 'User blocked successfully', user: result.rows[0] });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+// Unblock user route
+// Unblock a single user route
+router.patch('/:id/unblock', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query('UPDATE users SET status = $1 WHERE id = $2 RETURNING *', ['active', id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ message: 'User unblocked successfully', user: result.rows[0] });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete user route
+router.delete('/delete', authenticateToken, async (req, res) => {
+  const { userIds } = req.body;
+
+  try {
+    await pool.query('DELETE FROM users WHERE id = ANY($1)', [userIds]);
+    res.json({ message: 'Users deleted successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 module.exports = router;
 

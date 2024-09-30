@@ -3,10 +3,10 @@ const dotenv = require('dotenv');
 const pool = require('../db');
 dotenv.config();
 
-// Middleware to verify token and permission
+// Middleware to verify token and permission, and check user status
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  
+
   // Debugging: Check if the Authorization header is received
   console.log('Authorization Header:', authHeader);
 
@@ -16,16 +16,30 @@ const authenticateToken = async (req, res, next) => {
 
   // Split the "Bearer <token>" to extract only the token
   const token = authHeader.split(' ')[1];
-  
+
   // Debugging: Check if the token is being extracted properly
   console.log('Extracted Token:', token);
 
   try {
     // Verify the token with the secret
     const verified = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     // Debugging: Check the content of the verified token
     console.log('Verified Token:', verified);
+
+    // Fetch the user from the database to check their status
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [verified.userId]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(403).json({ message: 'User not found. Please log in again.' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Check if the user is blocked
+    if (user.status === 'blocked') {
+      return res.status(403).json({ message: 'Your account is blocked. Please contact support.' });
+    }
 
     // Attach the verified user info to the req object
     req.user = verified;
@@ -34,27 +48,6 @@ const authenticateToken = async (req, res, next) => {
     // Debugging: Log the error if verification fails
     console.error('JWT Verification Error:', error);
     return res.status(403).json({ message: 'Invalid token' });
-  }
-};
-
-
-// Middleware to check user status (active or blocked)
-const checkUserStatus = async (req, res, next) => {
-  try {
-    const user = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
-
-    if (user.rows.length === 0) {
-      return res.status(403).json({ message: 'User not found. Please log in again.' });
-    }
-
-    if (user.rows[0].status === 'blocked') {
-      return res.status(403).json({ message: 'Your account is blocked. Please contact support.' });
-    }
-
-    next();
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -69,7 +62,6 @@ const isAdmin = (req, res, next) => {
 
 module.exports = {
   authenticateToken,
-  checkUserStatus,
   isAdmin,
 };
 
